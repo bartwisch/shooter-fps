@@ -304,23 +304,29 @@ func reload():
 
 # ─── Update ───
 func update_game(dt):
-	# Turning
-	var ts = player.turn_speed * dt * 60
-	var turn_input = (1 if Input.is_action_pressed("turn_right") else 0) - (1 if Input.is_action_pressed("turn_left") else 0)
+	# Sprint + Aim
+	var sprinting = Input.is_action_pressed("sprint")
+	var aiming = Input.is_action_pressed("aim")
+
+	# Turning: right stick X or A/D keys (slower when aiming)
+	var ts = player.turn_speed * dt * 60 * (0.4 if aiming else 1.0)
+	var turn_input = Input.get_axis("turn_left", "turn_right")
 	player.angle += ts * turn_input
 
-	# Pitch
-	var pitch_speed = 0.03 * dt * 60
-	var pitch_input = (1 if Input.is_action_pressed("look_up") else 0) - (1 if Input.is_action_pressed("look_down") else 0)
+	# Pitch: right stick Y or R/F keys (slower when aiming)
+	var pitch_speed = 0.03 * dt * 60 * (0.4 if aiming else 1.0)
+	var pitch_input = Input.get_axis("look_up", "look_down")
 	player.pitch += pitch_speed * pitch_input
 	player.pitch = clamp(player.pitch, -0.6, 0.6)
 
-	# Movement
-	var ps = player.speed * dt * 60
-	var fwd = (1 if Input.is_action_pressed("move_forward") else 0) - (1 if Input.is_action_pressed("move_back") else 0)
-	if fwd != 0:
-		var nx = player.x + cos(player.angle) * fwd * ps
-		var ny = player.y + sin(player.angle) * fwd * ps
+	# Movement: left stick or W/S keys (faster when sprinting, slower when aiming)
+	var speed_mul = 1.8 if sprinting else 0.5 if aiming else 1.0
+	var ps = player.speed * speed_mul * dt * 60
+	var fwd = Input.get_axis("move_back", "move_forward")
+	var strafe = Input.get_axis("strafe_left", "strafe_right")
+	if fwd != 0 or strafe != 0:
+		var nx = player.x + (cos(player.angle) * fwd + cos(player.angle + PI/2) * strafe) * ps
+		var ny = player.y + (sin(player.angle) * fwd + sin(player.angle + PI/2) * strafe) * ps
 		if can_move(nx, player.y): player.x = nx
 		if can_move(player.x, ny): player.y = ny
 
