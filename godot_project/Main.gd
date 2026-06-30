@@ -509,8 +509,8 @@ func render():
 
 	# Walls
 	wall_distances = []
-	wall_distances.resize(W)
-	for x in range(W):
+	wall_distances.resize(int(W))
+	for x in range(int(W)):
 		var ra = player.angle - HALF_FOV + (float(x) / W) * FOV
 		var dist = cast_ray(ra)
 		wall_distances[x] = dist
@@ -541,7 +541,7 @@ func render():
 		var sx = W/2 + (rel / HALF_FOV) * (W/2)
 		var size = min(H * 2, (TILE * H * 0.8) / max(1, cd))
 		var col = int(sx)
-		if col < 0 or col >= W or cd >= wall_distances[col]: continue
+		if col < 0 or col >= int(W) or cd >= wall_distances[col]: continue
 
 		var cy = H/2 - cam_y
 		var hs = size / 2
@@ -597,7 +597,7 @@ func render():
 		var sx = W/2 + (rel / HALF_FOV) * (W/2)
 		var size = max(3, min(H * 0.3, (TILE * H * 0.4) / max(1, cd)))
 		var col = int(sx)
-		if col >= 0 and col < W and cd < wall_distances[col]:
+		if col >= 0 and col < int(W) and cd < wall_distances[col]:
 			draw_circle(Vector2(sx, H/2 - cam_y), size, b.color)
 			draw_circle(Vector2(sx, H/2 - cam_y), size * 0.5, Color.WHITE)
 
