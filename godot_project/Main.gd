@@ -122,14 +122,19 @@ func start_wave():
 func spawn_enemy():
 	var x = 0.0
 	var y = 0.0
-	for i in range(20):
+	var found = false
+	for i in range(50):
 		var mx = randi() % MAP_W
 		var my = randi() % MAP_H
 		if MAP[my][mx] == 0:
 			x = (mx + 0.5) * TILE
 			y = (my + 0.5) * TILE
 			if Vector2(x, y).distance_to(Vector2(player.x, player.y)) > TILE * 3:
+				found = true
 				break
+	if not found:
+		x = 12.5 * TILE
+		y = 12.5 * TILE
 	var boss_weapons = ["pistol", "mp5", "flamer", "sniper"]
 	enemies.append({
 		"x": x, "y": y, "r": 14,
@@ -169,6 +174,16 @@ func can_move(nx, ny):
 		if my < 0 or my >= MAP_H or mx < 0 or mx >= MAP_W: return false
 		if MAP[my][mx] == 1:
 			if player_top < TILE - 5: return false
+	return true
+
+func can_enemy_move(nx, ny):
+	var r = 14
+	var corners = [[nx-r, ny-r], [nx+r, ny-r], [nx-r, ny+r], [nx+r, ny+r]]
+	for c in corners:
+		var mx = int(float(c[0]) / TILE)
+		var my = int(float(c[1]) / TILE)
+		if my < 0 or my >= MAP_H or mx < 0 or mx >= MAP_W: return false
+		if MAP[my][mx] == 1: return false
 	return true
 
 func cast_ray(angle):
@@ -379,8 +394,8 @@ func update_game(dt):
 		if dist > 0:
 			var nx = e.x + (dx/dist) * step
 			var ny = e.y + (dy/dist) * step
-			if can_move(nx, e.y): e.x = nx
-			if can_move(e.x, ny): e.y = ny
+			if can_enemy_move(nx, e.y): e.x = nx
+			if can_enemy_move(e.x, ny): e.y = ny
 		if dist < e.r + 14 and (player.floor_z + player.jump_z) < 20:
 			player.hp -= e.dmg * dt
 			if player.hp <= 0:
@@ -580,10 +595,11 @@ func render():
 		if abs(rel) > HALF_FOV + 0.2: continue
 		var cd = dist * cos(rel)
 		var sx = W/2 + (rel / HALF_FOV) * (W/2)
-		var size = min(H, (TILE * H * 0.15) / max(1, cd))
+		var size = max(3, min(H * 0.3, (TILE * H * 0.4) / max(1, cd)))
 		var col = int(sx)
 		if col >= 0 and col < W and cd < wall_distances[col]:
 			draw_circle(Vector2(sx, H/2 - cam_y), size, b.color)
+			draw_circle(Vector2(sx, H/2 - cam_y), size * 0.5, Color.WHITE)
 
 	# Crosshair
 	var ch_color = Color(1, 1, 1, 0.6)
