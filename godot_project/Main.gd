@@ -60,23 +60,20 @@ var muzzle_timer = 0.0
 var W = 960
 var H = 540
 
-# ─── Nodes ───
-@onready var canvas = $CanvasLayer/CanvasRect
-var canvas_item: RID
-
 # ─── Audio ───
 var audio_players = []
+var default_font: Font
 
 func _ready():
 	W = get_viewport().get_window().size.x
 	H = get_viewport().get_window().size.y
-	canvas_item = RenderingServer.canvas_item_create()
-	RenderingServer.canvas_item_set_parent(canvas_item, canvas.get_canvas_item())
+	default_font = get_window().get_theme_default_font()
 
 func _process(dt):
 	if not game_running:
 		if Input.is_action_just_pressed("start"):
 			start_game()
+		queue_redraw()
 		return
 
 	if dt > 0.05: dt = 0.05
@@ -84,8 +81,7 @@ func _process(dt):
 	queue_redraw()
 
 func _draw():
-	if game_running:
-		render()
+	render()
 
 # ─── Game Logic ───
 func start_game():
@@ -591,23 +587,19 @@ func render():
 	draw_line(Vector2(W/2, H/2+4 - cam_y), Vector2(W/2, H/2+10 - cam_y), ch_color, 2)
 
 	# HUD
-	draw_string(create_font(), Vector2(10, 25), "HP: %d" % int(max(0, player.hp)), HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.WHITE)
-	draw_string(create_font(), Vector2(10, 50), "SCORE: %d" % score, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.WHITE)
-	draw_string(create_font(), Vector2(10, 75), "WAVE: %d" % wave, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.WHITE)
-	draw_string(create_font(), Vector2(10, 100), "GRANATEN: %d" % grenade_count, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.WHITE)
-	draw_string(create_font(), Vector2(W/2 - 50, H - 30), WEAPONS[current_weapon].name, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
+	draw_string(default_font, Vector2(10, 25), "HP: %d" % int(max(0, player.hp)), HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.WHITE)
+	draw_string(default_font, Vector2(10, 50), "SCORE: %d" % score, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.WHITE)
+	draw_string(default_font, Vector2(10, 75), "WAVE: %d" % wave, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.WHITE)
+	draw_string(default_font, Vector2(10, 100), "GRANATEN: %d" % grenade_count, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.WHITE)
+	draw_string(default_font, Vector2(W/2 - 50, H - 30), WEAPONS[current_weapon].name, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
 
 	# Start screen
 	if not game_running:
 		draw_rect(Rect2(0, 0, W, H), Color(0, 0, 0, 0.85))
-		draw_string(create_font(), Vector2(W/2 - 80, H/2 - 40), "SHOOTER FPS", HORIZONTAL_ALIGNMENT_LEFT, -1, 32, Color.WHITE)
-		draw_string(create_font(), Vector2(W/2 - 120, H/2 + 10), "Druecke [E] um zu starten", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.GRAY)
-		draw_string(create_font(), Vector2(W/2 - 180, H/2 + 50), "WASD - Bewegen | Leertaste - Schiessen | Shift - Springen", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.DIM_GRAY)
-		draw_string(create_font(), Vector2(W/2 - 180, H/2 + 70), "Q - Granate | R/F - Schauen | 1-4 - Waffe | N - Nachladen", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.DIM_GRAY)
-
-func create_font():
-	var f = FontFile.new()
-	return f
+		draw_string(default_font, Vector2(W/2 - 80, H/2 - 40), "SHOOTER FPS", HORIZONTAL_ALIGNMENT_LEFT, -1, 32, Color.WHITE)
+		draw_string(default_font, Vector2(W/2 - 120, H/2 + 10), "Druecke [E] um zu starten", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.GRAY)
+		draw_string(default_font, Vector2(W/2 - 180, H/2 + 50), "WASD - Bewegen | Leertaste - Schiessen | Shift - Springen", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.DIM_GRAY)
+		draw_string(default_font, Vector2(W/2 - 180, H/2 + 70), "Q - Granate | R/F - Schauen | 1-4 - Waffe | N - Nachladen", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.DIM_GRAY)
 
 # ─── Sound ───
 func play_tone(freq, dur, type, vol, slide):
