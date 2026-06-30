@@ -1,0 +1,1110 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SHOOTER FPS</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
+  canvas { display: block; cursor: none; }
+  #hud {
+    position: fixed; top: 0; left: 0; width: 100%; pointer-events: none;
+    display: flex; justify-content: space-between; padding: 12px 20px;
+    color: #fff; font-size: 18px; text-shadow: 2px 2px 4px #000;
+  }
+  #weapon-hud {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 10px; pointer-events: none;
+  }
+  .weapon-slot {
+    background: rgba(0,0,0,0.6); border: 2px solid #444; border-radius: 8px;
+    padding: 8px 16px; color: #aaa; font-size: 14px; text-align: center;
+    min-width: 100px;
+  }
+  .weapon-slot.active { border-color: #0f0; color: #0f0; background: rgba(0,40,0,0.6); }
+  .weapon-slot .key { display: block; font-size: 11px; opacity: 0.6; }
+  #wave-banner {
+    position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%);
+    font-size: 48px; color: #fff; text-shadow: 3px 3px 8px #000;
+    opacity: 0; transition: opacity 0.5s; pointer-events: none;
+  }
+  #game-over {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.85); display: none; flex-direction: column;
+    align-items: center; justify-content: center; color: #f00; font-size: 40px;
+    cursor: pointer;
+  }
+  #game-over span { font-size: 20px; color: #fff; margin-top: 20px; }
+  #start-screen {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: #111; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; color: #fff;
+    z-index: 10;
+  }
+  #start-screen h1 { font-size: 60px; color: #f00; text-shadow: 3px 3px 8px #000; margin-bottom: 10px; }
+  #start-screen p { font-size: 18px; color: #aaa; margin: 5px; }
+  #start-screen .start-prompt { font-size: 28px; color: #0f0; margin-top: 30px; animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: 0.3; } }
+  #start-screen .controls { margin-top: 20px; font-size: 14px; color: #666; line-height: 1.8; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+  <div>HP <span id="hp">100</span></div>
+  <div>SCORE <span id="score">0</span></div>
+  <div>WAVE <span id="wave">1</span></div>
+  <div>GRANATEN <span id="grenades">3</span></div>
+</div>
+<div id="weapon-hud"></div>
+<div id="wave-banner"></div>
+<div id="start-screen">
+  <h1>SHOOTER FPS</h1>
+  <p>Pistole - MP5 - Flammenwerfer - Sniper</p>
+  <div class="start-prompt">Druecke [3] oder [Start] um zu starten</div>
+  <div class="controls">
+    Tastatur: Pfeiltasten — Bewegen/Drehen · R/F — Hoch/Runter schauen · Leertaste — Schiessen · Shift — Springen · Q — Granate · 1-4 Waffe · N Nachladen<br>
+    Xbox: Linker Stick — Bewegen · Rechter Stick — Drehen · RT — Schiessen · A — Granate · X — Sprinten<br>
+    LT — Zielfernrohr · LT/LB/Y — Springen · D-Pad — Waffe · B — Nachladen · Start — Spiel starten
+  </div>
+</div>
+<div id="game-over">
+  GAME OVER
+  <span>Klicke zum Neustarten</span>
+</div>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W, H;
+
+// ─── Sound System ───
+let audioCtx = null;
+function initAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+function playTone(freq, dur, type, vol, slide) {
+  if (!audioCtx) return;
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = type || 'square';
+  o.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  if (slide) o.frequency.exponentialRampToValueAtTime(slide, audioCtx.currentTime + dur);
+  g.gain.setValueAtTime(vol || 0.15, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(); o.stop(audioCtx.currentTime + dur);
+}
+function playNoise(dur, vol, filterFreq) {
+  if (!audioCtx) return;
+  const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * dur, audioCtx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 2);
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  const filt = audioCtx.createBiquadFilter();
+  filt.type = 'lowpass'; filt.frequency.value = filterFreq || 1000;
+  const g = audioCtx.createGain();
+  g.gain.value = vol || 0.2;
+  src.connect(filt); filt.connect(g); g.connect(audioCtx.destination);
+  src.start();
+}
+function sndShoot(weapon) {
+  initAudio();
+  if (weapon === 'pistol') playTone(220, 0.08, 'square', 0.12, 80);
+  else if (weapon === 'mp5') playTone(180, 0.05, 'sawtooth', 0.1, 60);
+  else if (weapon === 'sniper') { playTone(150, 0.15, 'sawtooth', 0.18, 40); playNoise(0.1, 0.1, 800); }
+  else if (weapon === 'flamer') playNoise(0.12, 0.08, 500);
+}
+function sndExplosion() {
+  initAudio();
+  playNoise(0.5, 0.3, 300);
+  playTone(60, 0.4, 'sine', 0.2, 20);
+}
+function sndJump() {
+  initAudio();
+  playTone(300, 0.15, 'sine', 0.1, 600);
+}
+function sndHit() {
+  initAudio();
+  playTone(100, 0.05, 'square', 0.08, 50);
+}
+function sndHeadshot() {
+  initAudio();
+  playTone(800, 0.08, 'sine', 0.15, 1200);
+  playTone(400, 0.12, 'sine', 0.1, 800);
+}
+function sndReload() {
+  initAudio();
+  playTone(400, 0.05, 'click', 0.08);
+  setTimeout(() => playTone(600, 0.05, 'click', 0.08), 100);
+}
+function sndEnemyShoot(weapon) {
+  initAudio();
+  if (weapon === 'sniper') playTone(120, 0.1, 'sawtooth', 0.06, 40);
+  else if (weapon === 'flamer') playNoise(0.08, 0.04, 400);
+  else playTone(160, 0.05, 'square', 0.05, 60);
+}
+function sndWave() {
+  initAudio();
+  playTone(440, 0.15, 'sine', 0.1, 660);
+  setTimeout(() => playTone(660, 0.15, 'sine', 0.1, 880), 150);
+}
+function sndGameOver() {
+  initAudio();
+  playTone(200, 0.5, 'sawtooth', 0.15, 50);
+}
+function resize() { W = canvas.width = innerWidth; H = canvas.height = innerHeight; }
+resize();
+addEventListener('resize', resize);
+
+const TILE = 64;
+const FOV = Math.PI / 3;
+
+const MAP = [
+  [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],
+  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1],
+  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1],
+  [1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1],
+  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1],
+  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],
+  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+];
+const MAP_W = MAP[0].length;
+const MAP_H = MAP.length;
+
+const WEAPONS = {
+  pistol: { name: 'Pistole', key: '1', dmg: 34, fireRate: 350, range: 9999, ammo: Infinity, maxAmmo: Infinity, auto: false },
+  mp5: { name: 'MP5', key: '2', dmg: 20, fireRate: 80, range: 9999, ammo: 120, maxAmmo: 120, auto: true, spread: 0.05 },
+  flamer: { name: 'Flammenwerfer', key: '3', dmg: 8, fireRate: 30, range: 200, ammo: 100, maxAmmo: 100, auto: true, cone: 0.35 },
+  sniper: { name: 'Sniper', key: '4', dmg: 150, fireRate: 1200, range: 9999, ammo: 30, maxAmmo: 30, auto: false, sniper: true },
+};
+
+let player, enemies, enemyBullets, particles, keys, currentWeapon, lastShot;
+let grenades;
+let wave, score, waveTimer, enemiesToSpawn, spawnTimer, gameRunning;
+let muzzleFlash, muzzleTimer, wallDistances;
+
+function init() {
+  player = { x: 3.5*TILE, y: 5.5*TILE, angle: 0, pitch: 0, hp: 150, speed: 2.8, turnSpeed: 0.045, jumpZ: 0, jumpVZ: 0, jumping: false, floorZ: 0 };
+  enemies = []; enemyBullets = []; particles = []; grenades = []; keys = {};
+  currentWeapon = 'pistol'; lastShot = {};
+  wave = 0; score = 0; waveTimer = 0; enemiesToSpawn = 0; spawnTimer = 0;
+  grenadeCount = 3;
+  muzzleFlash = false; muzzleTimer = 0; gameRunning = true;
+  for (const k in WEAPONS) WEAPONS[k].ammo = WEAPONS[k].maxAmmo;
+  startWave(); buildWeaponHUD(); updateHUD();
+}
+
+function startWave() {
+  wave++;
+  enemiesToSpawn = 1;
+  spawnTimer = 0;
+  showBanner('WAVE ' + wave);
+  sndWave();
+}
+
+function showBanner(text) {
+  const b = document.getElementById('wave-banner');
+  b.textContent = text; b.style.opacity = 1;
+  setTimeout(() => b.style.opacity = 0, 1500);
+}
+
+function buildWeaponHUD() {
+  const hud = document.getElementById('weapon-hud');
+  hud.innerHTML = '';
+  for (const k in WEAPONS) {
+    const w = WEAPONS[k];
+    const div = document.createElement('div');
+    div.className = 'weapon-slot' + (k === currentWeapon ? ' active' : '');
+    div.id = 'slot-' + k;
+    div.innerHTML = `<span class="key">[${w.key}]</span>${w.name}<br><span id="ammo-${k}" style="font-size:12px">${w.ammo === Infinity ? '∞' : w.ammo}</span>`;
+    hud.appendChild(div);
+  }
+}
+
+function updateHUD() {
+  document.getElementById('hp').textContent = Math.max(0, Math.round(player.hp));
+  document.getElementById('score').textContent = score;
+  document.getElementById('wave').textContent = wave;
+  const gel = document.getElementById('grenades');
+  if (gel) gel.textContent = grenadeCount;
+  for (const k in WEAPONS) {
+    const el = document.getElementById('ammo-' + k);
+    if (el) el.textContent = WEAPONS[k].ammo === Infinity ? '∞' : WEAPONS[k].ammo;
+    const slot = document.getElementById('slot-' + k);
+    if (slot) slot.className = 'weapon-slot' + (k === currentWeapon ? ' active' : '');
+  }
+}
+
+let jumpHeld = false;
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (e.key === 'Shift' && !jumpHeld) { jumpHeld = true; tryJump(); }
+  if (k === 'q' && !keys['q']) throwGrenade();
+  keys[k] = true;
+  if (e.key.startsWith('Arrow')) e.preventDefault();
+  if (e.key === '1') switchWeapon('pistol');
+  if (e.key === '2') switchWeapon('mp5');
+  if (e.key === '3') { if (!gameRunning && document.getElementById('start-screen').style.display !== 'none') { startGame(); } else { switchWeapon('flamer'); } }
+  if (e.key === '4') switchWeapon('sniper');
+  if (k === 'n') reload();
+  if (e.key === ' ') e.preventDefault();
+});
+addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; if (e.key === 'Shift') jumpHeld = false; });
+
+document.getElementById('game-over').addEventListener('click', () => {
+  document.getElementById('game-over').style.display = 'none';
+  init();
+});
+
+function switchWeapon(k) {
+  if (WEAPONS[k] && WEAPONS[k].ammo > 0) { currentWeapon = k; updateHUD(); }
+}
+
+function reload() {
+  const w = WEAPONS[currentWeapon];
+  if (w.maxAmmo !== Infinity) w.ammo = w.maxAmmo;
+  sndReload();
+  updateHUD();
+}
+
+function startGame() {
+  initAudio();
+  document.getElementById('start-screen').style.display = 'none';
+  init();
+}
+
+// ─── Raycasting ───
+function castRay(angle) {
+  const dx = Math.cos(angle), dy = Math.sin(angle);
+  let mapX = Math.floor(player.x / TILE);
+  let mapY = Math.floor(player.y / TILE);
+  const ddx = dx === 0 ? 1e30 : Math.abs(1 / dx);
+  const ddy = dy === 0 ? 1e30 : Math.abs(1 / dy);
+  let stepX, stepY, sdx, sdy;
+  if (dx < 0) { stepX = -1; sdx = (player.x/TILE - mapX) * ddx; }
+  else { stepX = 1; sdx = (mapX + 1 - player.x/TILE) * ddx; }
+  if (dy < 0) { stepY = -1; sdy = (player.y/TILE - mapY) * ddy; }
+  else { stepY = 1; sdy = (mapY + 1 - player.y/TILE) * ddy; }
+  let hit = false, side = 0, guard = 0;
+  while (!hit && guard++ < 100) {
+    if (sdx < sdy) { sdx += ddx; mapX += stepX; side = 0; }
+    else { sdy += ddy; mapY += stepY; side = 1; }
+    if (mapY < 0 || mapY >= MAP_H || mapX < 0 || mapX >= MAP_W) { hit = true; break; }
+    if (MAP[mapY][mapX] === 1) hit = true;
+  }
+  let pd;
+  if (side === 0) pd = (mapX - player.x/TILE + (1 - stepX) / 2) / dx;
+  else pd = (mapY - player.y/TILE + (1 - stepY) / 2) / dy;
+  if (pd < 0.01) pd = 0.01;
+  return pd * TILE;
+}
+
+function tileAt(x, y) {
+  const mx = Math.floor(x / TILE), my = Math.floor(y / TILE);
+  if (my < 0 || my >= MAP_H || mx < 0 || mx >= MAP_W) return 1;
+  return MAP[my][mx];
+}
+
+function canMove(nx, ny) {
+  const r = 12;
+  const cs = [[nx-r,ny-r],[nx+r,ny-r],[nx-r,ny+r],[nx+r,ny+r]];
+  const playerTop = player.floorZ + player.jumpZ;
+  for (const [cx, cy] of cs) {
+    const mx = Math.floor(cx / TILE), my = Math.floor(cy / TILE);
+    if (my < 0 || my >= MAP_H || mx < 0 || mx >= MAP_W) return false;
+    if (MAP[my][mx] === 1) {
+      // Can enter wall tile only if jumping high enough to be on top
+      if (playerTop < TILE - 5) return false;
+    }
+  }
+  return true;
+}
+
+// ─── Shooting ───
+function tryShoot(now) {
+  const w = WEAPONS[currentWeapon];
+  if (w.ammo <= 0) return;
+  if (now - (lastShot[currentWeapon] || 0) < w.fireRate) return;
+  lastShot[currentWeapon] = now;
+  w.ammo--;
+  muzzleFlash = true; muzzleTimer = 80;
+  sndShoot(currentWeapon);
+
+  const aim = player.angle + (w.spread ? (Math.random() - 0.5) * w.spread : 0);
+
+  if (currentWeapon === 'flamer') {
+    for (const e of enemies) {
+      const dx = e.x - player.x, dy = e.y - player.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > w.range) continue;
+      const ang = Math.atan2(dy, dx);
+      let diff = Math.abs(ang - player.angle);
+      if (diff > Math.PI) diff = Math.PI * 2 - diff;
+      if (diff < w.cone) {
+        const wd = castRay(ang);
+        if (dist < wd) {
+          const headshot = player.pitch > 0.15;
+          const dmg = w.dmg * (headshot ? 3 : 1);
+          e.hp -= dmg;
+          spawnParticles(e.x, e.y, 3, headshot ? '#f0f' : '#f60');
+          if (headshot) { spawnParticles(e.x, e.y - e.r, 8, '#f0f'); sndHeadshot(); } else sndHit();
+          if (e.hp <= 0) killEnemy(e);
+        }
+      }
+    }
+  } else {
+    if (currentWeapon === 'sniper') {
+      // Sniper pierces through all enemies in line
+      const hit = [];
+      for (const e of enemies) {
+        const dx = e.x - player.x, dy = e.y - player.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > w.range) continue;
+        const ang = Math.atan2(dy, dx);
+        let diff = Math.abs(ang - aim);
+        if (diff > Math.PI) diff = Math.PI * 2 - diff;
+        const angSize = Math.atan2(e.r, dist);
+        if (diff < angSize) {
+          const wd = castRay(ang);
+          if (dist < wd) hit.push(e);
+        }
+      }
+      for (const e of hit) {
+        const headshot = player.pitch > 0.15;
+        const dmg = w.dmg * (headshot ? 3 : 1);
+        e.hp -= dmg;
+        spawnParticles(e.x, e.y, 8, headshot ? '#f0f' : '#0ff');
+        if (headshot) { spawnParticles(e.x, e.y - e.r, 12, '#f0f'); sndHeadshot(); } else sndHit();
+        if (e.hp <= 0) killEnemy(e);
+      }
+    } else {
+      let closest = null, closestDist = Infinity;
+      for (const e of enemies) {
+        const dx = e.x - player.x, dy = e.y - player.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > w.range) continue;
+        const ang = Math.atan2(dy, dx);
+        let diff = Math.abs(ang - aim);
+        if (diff > Math.PI) diff = Math.PI * 2 - diff;
+        const angSize = Math.atan2(e.r, dist);
+        if (diff < angSize && dist < closestDist) {
+          const wd = castRay(ang);
+          if (dist < wd) { closest = e; closestDist = dist; }
+        }
+      }
+      if (closest) {
+        const headshot = player.pitch > 0.15;
+        const dmg = w.dmg * (headshot ? 3 : 1);
+        closest.hp -= dmg;
+        spawnParticles(closest.x, closest.y, 8, headshot ? '#f0f' : '#ff0');
+        if (headshot) { spawnParticles(closest.x, closest.y - closest.r, 12, '#f0f'); sndHeadshot(); } else sndHit();
+        if (closest.hp <= 0) killEnemy(closest);
+      }
+    }
+  }
+  updateHUD();
+}
+
+// ─── Enemies ───
+function spawnEnemy() {
+  let x, y, tries = 0;
+  do {
+    const side = Math.floor(Math.random() * 4);
+    if (side === 0) { x = Math.random() * MAP_W * TILE; y = TILE; }
+    else if (side === 1) { x = (MAP_W-2) * TILE; y = Math.random() * MAP_H * TILE; }
+    else if (side === 2) { x = Math.random() * MAP_W * TILE; y = (MAP_H-2) * TILE; }
+    else { x = TILE; y = Math.random() * MAP_H * TILE; }
+    tries++;
+  } while ((!canMove(x, y) || Math.hypot(x - player.x, y - player.y) < 300) && tries < 30);
+
+  // Single boss enemy that gets stronger each wave and uses all 4 weapons
+  const hp = 80 + wave * 40;
+  const speed = 0.8 + wave * 0.15;
+  const dmg = 10 + wave * 3;
+  const r = 16 + wave * 2;
+  const canShoot = wave >= 2;
+  const color = wave < 3 ? '#f44' : wave < 6 ? '#f80' : '#f0f';
+  const bossWeapons = ['pistol', 'mp5', 'flamer', 'sniper'];
+  enemies.push({
+    x, y, r, hp, speed, dmg, color, type: 'boss', wave,
+    canShoot, shotTimer: 2000,
+    bossWeapons, bossWeaponIdx: 0, weaponSwapTimer: 4000 + Math.random() * 2000,
+  });
+}
+
+function killEnemy(e) {
+  const idx = enemies.indexOf(e);
+  if (idx > -1) enemies.splice(idx, 1);
+  score += 50 + wave * 10;
+  spawnParticles(e.x, e.y, 15, e.color);
+  if (Math.random() < 0.2) {
+    const wks = ['mp5', 'flamer', 'sniper'];
+    const wk = wks[Math.floor(Math.random() * wks.length)];
+    WEAPONS[wk].ammo = Math.min(WEAPONS[wk].maxAmmo, WEAPONS[wk].ammo + Math.floor(WEAPONS[wk].maxAmmo * 0.3));
+  }
+  grenadeCount = Math.min(5, grenadeCount + 1);
+  updateHUD();
+}
+
+function spawnParticles(x, y, count, color) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = Math.random() * 4 + 1;
+    particles.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 25, color, size: Math.random()*3+1 });
+  }
+}
+
+// ─── Gamepad ───
+let gamepadState = { connected: false, lx: 0, ly: 0, rx: 0, ry: 0, shoot: false, start: false };
+let prevButtons = {};
+
+function updateGamepad() {
+  const pads = navigator.getGamepads();
+  let gp = null;
+  for (const p of pads) { if (p) { gp = p; break; } }
+  if (!gp) { gamepadState.connected = false; return; }
+  gamepadState.connected = true;
+  const dz = 0.25;
+  gamepadState.lx = Math.abs(gp.axes[0]) > dz ? gp.axes[0] : 0;
+  gamepadState.ly = Math.abs(gp.axes[1]) > dz ? gp.axes[1] : 0;
+  gamepadState.rx = Math.abs(gp.axes[2]) > dz ? gp.axes[2] : 0;
+  gamepadState.ry = Math.abs(gp.axes[3]) > dz ? gp.axes[3] : 0;
+  // RT (index 7) to shoot
+  gamepadState.shoot = gp.buttons[7] && gp.buttons[7].value > 0.3;
+  // LT (index 6) for scope/aim
+  gamepadState.aim = gp.buttons[6] && gp.buttons[6].value > 0.3;
+  // X button (index 2) for sprint
+  gamepadState.sprint = gp.buttons[2] && gp.buttons[2].pressed;
+  // Start button (index 9)
+  gamepadState.start = gp.buttons[9] && gp.buttons[9].pressed;
+
+  // D-Pad weapon switch (edge-triggered)
+  const dpadUp = gp.buttons[12] && gp.buttons[12].pressed;
+  const dpadDown = gp.buttons[13] && gp.buttons[13].pressed;
+  const dpadLeft = gp.buttons[14] && gp.buttons[14].pressed;
+  const dpadRight = gp.buttons[15] && gp.buttons[15].pressed;
+  const yBtn = gp.buttons[3] && gp.buttons[3].pressed;
+  const bBtn = gp.buttons[1] && gp.buttons[1].pressed;
+  const aBtn = gp.buttons[0] && gp.buttons[0].pressed;
+  const yBtn2 = gp.buttons[3] && gp.buttons[3].pressed;
+  const lbBtn = gp.buttons[6] && gp.buttons[6].pressed;
+  const ltBtn = gp.buttons[6] && gp.buttons[6].value > 0.3;
+  const lbBtn2 = gp.buttons[4] && gp.buttons[4].pressed;
+
+  // Sprint: X button held
+  gamepadState.sprinting = gamepadState.sprint;
+
+  if (dpadUp && !prevButtons.dpadUp) switchWeapon('pistol');
+  if (dpadRight && !prevButtons.dpadRight) switchWeapon('mp5');
+  if (dpadDown && !prevButtons.dpadDown) switchWeapon('flamer');
+  if (dpadLeft && !prevButtons.dpadLeft) switchWeapon('sniper');
+  if (bBtn && !prevButtons.bBtn) reload();
+  if ((yBtn2 && !prevButtons.yBtn2) || (lbBtn && !prevButtons.lbBtn) || (ltBtn && !prevButtons.ltBtn) || (lbBtn2 && !prevButtons.lbBtn2)) tryJump();
+  if (aBtn && !prevButtons.aBtn) throwGrenade();
+
+  // Start game from start screen
+  if (gamepadState.start && !prevButtons.start) {
+    if (!gameRunning && document.getElementById('start-screen').style.display !== 'none') {
+      startGame();
+    }
+  }
+
+  prevButtons = { dpadUp, dpadDown, dpadLeft, dpadRight, yBtn, bBtn, aBtn, yBtn2, lbBtn, ltBtn, lbBtn2, start: gamepadState.start, shoot: gamepadState.shoot };
+}
+
+addEventListener('gamepadconnected', e => { gamepadState.connected = true; });
+addEventListener('gamepaddisconnected', e => { gamepadState.connected = false; });
+
+function tryJump() {
+  if (!gameRunning || player.jumping) return;
+  player.jumping = true;
+  player.jumpVZ = 11;
+  sndJump();
+  // If on wall, start jump from wall height
+  if (player.floorZ > 0) {
+    player.jumpZ = player.floorZ;
+    player.floorZ = 0;
+  }
+}
+
+let grenadeCount = 3;
+function throwGrenade() {
+  if (!gameRunning || grenadeCount <= 0) return;
+  grenadeCount--;
+  const tx = player.x + Math.cos(player.angle) * 150;
+  const ty = player.y + Math.sin(player.angle) * 150;
+  grenades.push({
+    x: player.x, y: player.y,
+    tx, ty,
+    vx: Math.cos(player.angle) * 4,
+    vy: Math.sin(player.angle) * 4,
+    z: 0, vz: 6,
+    timer: 1500,
+    exploded: false,
+  });
+  updateHUD();
+}
+
+// ─── Update ───
+function update(dt) {
+  if (!gameRunning) {
+    updateGamepad();
+    if (gamepadState.start && !prevButtons.start) {
+      if (document.getElementById('start-screen').style.display !== 'none') startGame();
+    }
+    return;
+  }
+  if (dt > 50) dt = 50;
+  const now = performance.now();
+
+  updateGamepad();
+
+  // Turning: right stick X or arrow keys (slower when aiming)
+  const aiming = gamepadState.aim;
+  const ts = player.turnSpeed * dt / 16.67 * (aiming ? 0.4 : 1);
+  const turnInput = (keys['arrowright'] ? 1 : 0) - (keys['arrowleft'] ? 1 : 0) + gamepadState.rx * (aiming ? 0.5 : 1.5);
+  player.angle += ts * turnInput;
+
+  // Pitch: right stick Y or R/F keys
+  const pitchSpeed = 0.03 * dt / 16.67 * (aiming ? 0.4 : 1);
+  const pitchInput = (keys['r'] ? 1 : 0) - (keys['f'] ? 1 : 0) - gamepadState.ry;
+  player.pitch += pitchSpeed * pitchInput;
+  player.pitch = Math.max(-0.6, Math.min(0.6, player.pitch));
+
+  // Movement: left stick (forward/back + strafe) or arrow keys (faster when sprinting, slower when aiming)
+  const sprinting = gamepadState.sprinting;
+  const speedMul = sprinting ? 1.8 : aiming ? 0.5 : 1;
+  const ps = player.speed * speedMul * dt / 16.67;
+  const fwd = (keys['arrowup'] ? 1 : 0) - (keys['arrowdown'] ? 1 : 0) - gamepadState.ly;
+  const strafe = gamepadState.lx;
+  if (fwd !== 0 || strafe !== 0) {
+    const nx = player.x + (Math.cos(player.angle) * fwd + Math.cos(player.angle + Math.PI/2) * strafe) * ps;
+    const ny = player.y + (Math.sin(player.angle) * fwd + Math.sin(player.angle + Math.PI/2) * strafe) * ps;
+    if (canMove(nx, player.y)) player.x = nx;
+    if (canMove(player.x, ny)) player.y = ny;
+  }
+
+  // Shooting: space or gamepad trigger/A
+  const w = WEAPONS[currentWeapon];
+  const shooting = keys[' '] || (gamepadState.shoot && !player.jumping);
+  if (shooting && (w.auto || !lastShot._semi)) {
+    tryShoot(now);
+    if (!w.auto) lastShot._semi = true;
+  }
+  if (!shooting) lastShot._semi = false;
+
+  // Jump physics + floor detection
+  if (player.jumping) {
+    player.jumpVZ -= 0.6 * dt / 16.67;
+    player.jumpZ += player.jumpVZ * dt / 16.67;
+    if (player.jumpZ <= 0) {
+      // Landing - check if on top of a wall
+      const onWall = tileAt(player.x, player.y) === 1;
+      if (onWall && player.floorZ === 0) {
+        player.floorZ = TILE;
+        player.jumpZ = 0; player.jumpVZ = 0; player.jumping = false;
+      } else if (!onWall && player.floorZ > 0) {
+        // Walked off wall edge while in air - fall
+        player.floorZ = 0;
+        player.jumpZ = 0; player.jumpVZ = 0; player.jumping = false;
+      } else {
+        player.jumpZ = 0; player.jumpVZ = 0; player.jumping = false;
+      }
+    }
+  }
+  // Check if walked off wall edge (not jumping)
+  if (!player.jumping && player.floorZ > 0) {
+    if (tileAt(player.x, player.y) !== 1) {
+      // Walked off edge - start falling
+      player.jumping = true;
+      player.jumpZ = player.floorZ;
+      player.floorZ = 0;
+      player.jumpVZ = 0;
+    }
+  }
+
+  if (muzzleTimer > 0) { muzzleTimer -= dt; if (muzzleTimer <= 0) muzzleFlash = false; }
+
+  for (const e of enemies) {
+    const dx = player.x - e.x, dy = player.y - e.y;
+    const dist = Math.hypot(dx, dy);
+    const step = e.speed * dt / 16.67;
+    if (dist > 0) {
+      const nx = e.x + (dx/dist) * step;
+      const ny = e.y + (dy/dist) * step;
+      if (canMove(nx, e.y)) e.x = nx;
+      if (canMove(e.x, ny)) e.y = ny;
+    }
+    if (dist < e.r + 14 && (player.floorZ + player.jumpZ) < 20) {
+      player.hp -= e.dmg * dt / 1000;
+      if (player.hp <= 0) { player.hp = 0; gameOver(); }
+    }
+    if (e.canShoot && dist < 600) {
+      // Boss swaps weapons periodically
+      e.weaponSwapTimer -= dt;
+      if (e.weaponSwapTimer <= 0) {
+        e.bossWeaponIdx = (e.bossWeaponIdx + 1) % e.bossWeapons.length;
+        e.weaponSwapTimer = 4000 + Math.random() * 2000;
+        e.shotTimer = 500;
+      }
+      const bw = e.bossWeapons[e.bossWeaponIdx];
+      const wconf = WEAPONS[bw];
+      e.shotTimer -= dt;
+      if (e.shotTimer <= 0) {
+        const ang = Math.atan2(dy, dx) + (Math.random()-0.5)*0.08;
+        if (bw === 'flamer') {
+          // Flamer: spread of 5 bullets
+          for (let s = -2; s <= 2; s++) {
+            const sa = ang + s * 0.12;
+            enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(sa)*4, vy: Math.sin(sa)*4, dmg: 6 + wave, r: 5, life: 120, color: '#f60' });
+          }
+          sndEnemyShoot('flamer');
+          e.shotTimer = 300;
+        } else if (bw === 'sniper') {
+          // Sniper: fast, high damage, cyan
+          enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(ang)*9, vy: Math.sin(ang)*9, dmg: 25 + wave * 5, r: 5, life: 300, color: '#0ff' });
+          e.shotTimer = 1500;
+          sndEnemyShoot('sniper');
+        } else if (bw === 'mp5') {
+          // MP5: rapid fire, medium damage
+          enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(ang)*6, vy: Math.sin(ang)*6, dmg: 8 + wave * 2, r: 5, life: 250, color: '#ff0' });
+          e.shotTimer = 200;
+          sndEnemyShoot('mp5');
+        } else {
+          // Pistol: single shot
+          enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(ang)*5, vy: Math.sin(ang)*5, dmg: 12 + wave * 3, r: 6, life: 300, color: '#f80' });
+          e.shotTimer = 600;
+          sndEnemyShoot('pistol');
+        }
+      }
+    }
+  }
+
+  for (let i = enemyBullets.length-1; i >= 0; i--) {
+    const b = enemyBullets[i];
+    b.x += b.vx * dt / 16.67; b.y += b.vy * dt / 16.67; b.life -= dt / 16.67;
+    if (b.life <= 0) { enemyBullets.splice(i,1); continue; }
+    const mx = Math.floor(b.x/TILE), my = Math.floor(b.y/TILE);
+    if (my>=0 && my<MAP_H && mx>=0 && mx<MAP_W && MAP[my][mx]===1) { enemyBullets.splice(i,1); continue; }
+    if (Math.hypot(b.x-player.x, b.y-player.y) < 14 + b.r && (player.floorZ + player.jumpZ) < 5) {
+      player.hp -= b.dmg;
+      spawnParticles(b.x, b.y, 6, b.color);
+      enemyBullets.splice(i, 1);
+      if (player.hp <= 0) { player.hp = 0; gameOver(); }
+    }
+  }
+
+  for (let i = particles.length-1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.vx *= 0.92; p.vy *= 0.92; p.life--;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // Grenades
+  for (let i = grenades.length-1; i >= 0; i--) {
+    const g = grenades[i];
+    if (!g.exploded) {
+      g.x += g.vx * dt / 16.67;
+      g.y += g.vy * dt / 16.67;
+      g.z += g.vz * dt / 16.67;
+      g.vz -= 0.3 * dt / 16.67;
+      if (g.z <= 0) { g.z = 0; g.vz = 0; g.vx *= 0.5; g.vy *= 0.5; }
+      g.timer -= dt;
+      if (g.timer <= 0) {
+        g.exploded = true;
+        sndExplosion();
+        // Explosion damage
+        for (const e of enemies) {
+          const d = Math.hypot(e.x - g.x, e.y - g.y);
+          if (d < 120) {
+            e.hp -= 100 * (1 - d / 120);
+            if (e.hp <= 0) killEnemy(e);
+          }
+        }
+        // Damage player if too close
+        const pd = Math.hypot(player.x - g.x, player.y - g.y);
+        if (pd < 100) player.hp -= 30 * (1 - pd / 100);
+        spawnParticles(g.x, g.y, 30, '#fa0');
+        spawnParticles(g.x, g.y, 20, '#f80');
+      }
+    } else {
+      g.timer -= dt;
+      if (g.timer <= -300) grenades.splice(i, 1);
+    }
+  }
+
+  if (enemiesToSpawn > 0) {
+    spawnTimer -= dt;
+    if (spawnTimer <= 0) {
+      spawnEnemy(); enemiesToSpawn--;
+      spawnTimer = Math.max(500, 1500 - wave * 50);
+    }
+  } else if (enemies.length === 0) {
+    waveTimer -= dt;
+    if (waveTimer <= 0) { waveTimer = 2000; startWave(); }
+  }
+
+  updateHUD();
+}
+
+function gameOver() {
+  gameRunning = false;
+  sndGameOver();
+  document.getElementById('game-over').style.display = 'flex';
+}
+
+// ─── Render ───
+function render() {
+  const camY = (player.jumpZ + player.floorZ) * 0.8 + player.pitch * H * 0.4;
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, W, H/2 - camY);
+  ctx.fillStyle = '#2a2a3e';
+  ctx.fillRect(0, H/2 - camY, W, H/2 + camY);
+
+  wallDistances = new Array(W);
+  const halfFOV = FOV / 2;
+  for (let x = 0; x < W; x++) {
+    const ra = player.angle - halfFOV + (x / W) * FOV;
+    const dist = castRay(ra);
+    wallDistances[x] = dist;
+    const cd = dist * Math.cos(ra - player.angle);
+    const wh = Math.min(H, (TILE * H) / Math.max(1, cd));
+    const wt = (H - wh) / 2 - camY;
+    const shade = Math.max(0, Math.min(1, 1 - cd / (TILE * 10)));
+    const c = Math.floor(80 * shade);
+    ctx.fillStyle = `rgb(${c},${c},${c+20})`;
+    ctx.fillRect(x, wt, 1, wh);
+  }
+
+  const sorted = [...enemies].sort((a, b) =>
+    Math.hypot(b.x-player.x, b.y-player.y) - Math.hypot(a.x-player.x, a.y-player.y));
+
+  for (const e of sorted) {
+    const dx = e.x - player.x, dy = e.y - player.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 10) continue;
+    const ang = Math.atan2(dy, dx);
+    let rel = ang - player.angle;
+    while (rel > Math.PI) rel -= Math.PI * 2;
+    while (rel < -Math.PI) rel += Math.PI * 2;
+    if (Math.abs(rel) > halfFOV + 0.3) continue;
+
+    const cd = dist * Math.cos(rel);
+    const sx = W/2 + (rel / halfFOV) * (W/2);
+    const size = Math.min(H * 2, (TILE * H * 0.8) / Math.max(1, cd));
+    const colS = Math.max(0, Math.floor(sx - size/2));
+    const colE = Math.min(W-1, Math.ceil(sx + size/2));
+    let vis = false;
+    for (let cx = colS; cx <= colE; cx++) {
+      if (cd < wallDistances[cx]) { vis = true; break; }
+    }
+    if (!vis) continue;
+
+    const cy = H/2 - camY;
+    const hs = size / 2;
+    const bw = hs * 0.7; // body width
+    const bh = hs * 1.4; // body height
+
+    // Legs
+    ctx.fillStyle = '#2a2a2a';
+    ctx.fillRect(sx - bw*0.35, cy + hs*0.2, bw*0.25, hs*0.6);
+    ctx.fillRect(sx + bw*0.1, cy + hs*0.2, bw*0.25, hs*0.6);
+
+    // Torso (colored by wave)
+    ctx.fillStyle = e.color;
+    ctx.fillRect(sx - bw/2, cy - hs*0.3, bw, bh*0.55);
+
+    // Arms
+    ctx.fillStyle = e.color;
+    ctx.fillRect(sx - bw*0.7, cy - hs*0.25, bw*0.18, hs*0.5);
+    ctx.fillRect(sx + bw*0.52, cy - hs*0.25, bw*0.18, hs*0.5);
+
+    // Head
+    ctx.fillStyle = '#d99';
+    ctx.beginPath();
+    ctx.arc(sx, cy - hs*0.5, hs*0.28, 0, Math.PI*2);
+    ctx.fill();
+
+    // Glowing eyes
+    ctx.fillStyle = '#f00';
+    ctx.shadowColor = '#f00'; ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.arc(sx - hs*0.1, cy - hs*0.52, hs*0.06, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx + hs*0.1, cy - hs*0.52, hs*0.06, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Weapon in hand (shows current boss weapon) - large and colorful
+    const bwName = e.bossWeapons ? e.bossWeapons[e.bossWeaponIdx] : '';
+    if (bwName) {
+      const wx = sx + bw*0.55, wy = cy - hs*0.1;
+      if (bwName === 'sniper') {
+        // Sniper: long cyan barrel
+        ctx.fillStyle = '#0aa';
+        ctx.fillRect(wx, wy - hs*0.04, hs*0.8, hs*0.08);
+        ctx.fillStyle = '#0ff';
+        ctx.fillRect(wx + hs*0.6, wy - hs*0.06, hs*0.15, hs*0.12);
+        ctx.shadowColor = '#0ff'; ctx.shadowBlur = 6;
+        ctx.fillRect(wx + hs*0.7, wy - hs*0.02, hs*0.1, hs*0.04);
+        ctx.shadowBlur = 0;
+      } else if (bwName === 'mp5') {
+        // MP5: yellow compact gun with magazine
+        ctx.fillStyle = '#cc0';
+        ctx.fillRect(wx, wy - hs*0.06, hs*0.45, hs*0.12);
+        ctx.fillStyle = '#880';
+        ctx.fillRect(wx + hs*0.1, wy + hs*0.05, hs*0.12, hs*0.15);
+      } else if (bwName === 'flamer') {
+        // Flamer: orange wide barrel with tank
+        ctx.fillStyle = '#c60';
+        ctx.fillRect(wx, wy - hs*0.08, hs*0.4, hs*0.16);
+        ctx.fillStyle = '#f80';
+        ctx.beginPath(); ctx.arc(wx - hs*0.1, wy, hs*0.1, 0, Math.PI*2); ctx.fill();
+        ctx.shadowColor = '#f60'; ctx.shadowBlur = 5;
+        ctx.fillRect(wx + hs*0.35, wy - hs*0.04, hs*0.08, hs*0.08);
+        ctx.shadowBlur = 0;
+      } else {
+        // Pistol: gray small gun
+        ctx.fillStyle = '#888';
+        ctx.fillRect(wx, wy - hs*0.04, hs*0.25, hs*0.1);
+        ctx.fillStyle = '#555';
+        ctx.fillRect(wx + hs*0.05, wy + hs*0.05, hs*0.08, hs*0.1);
+      }
+    }
+
+    // HP bar
+    const barW = size * 0.8;
+    const maxHp = 80 + e.wave * 40;
+    const hpR = Math.max(0, e.hp / maxHp);
+    ctx.fillStyle = '#333';
+    ctx.fillRect(sx - barW/2, cy - hs - 8, barW, 4);
+    ctx.fillStyle = hpR > 0.5 ? '#0f0' : hpR > 0.25 ? '#ff0' : '#f00';
+    ctx.fillRect(sx - barW/2, cy - hs - 8, barW * hpR, 4);
+  }
+
+  // Render grenades
+  for (const g of grenades) {
+    const dx = g.x - player.x, dy = g.y - player.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 5) continue;
+    const ang = Math.atan2(dy, dx);
+    let rel = ang - player.angle;
+    while (rel > Math.PI) rel -= Math.PI * 2;
+    while (rel < -Math.PI) rel += Math.PI * 2;
+    if (Math.abs(rel) > halfFOV + 0.2) continue;
+    const cd = dist * Math.cos(rel);
+    const sx = W/2 + (rel / halfFOV) * (W/2);
+    const size = Math.min(H, (TILE * H * 0.1) / Math.max(1, cd));
+    const col = Math.floor(sx);
+    if (col < 0 || col >= W || cd >= wallDistances[col]) continue;
+
+    if (g.exploded) {
+      // Explosion flash
+      const flashSize = size * (3 + Math.random() * 2);
+      ctx.fillStyle = 'rgba(255,170,0,0.8)';
+      ctx.shadowColor = '#fa0'; ctx.shadowBlur = 30;
+      ctx.beginPath(); ctx.arc(sx, H/2 - camY, flashSize, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,200,0.5)';
+      ctx.beginPath(); ctx.arc(sx, H/2 - camY, flashSize * 0.5, 0, Math.PI*2); ctx.fill();
+      ctx.shadowBlur = 0;
+    } else {
+      // Shadow on ground
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.beginPath(); ctx.ellipse(sx, H/2 - camY + size, size * 0.8, size * 0.3, 0, 0, Math.PI*2); ctx.fill();
+      // Grenade body (raised by z)
+      const gz = H/2 - camY - g.z * 0.5;
+      ctx.fillStyle = '#3a3';
+      ctx.beginPath(); ctx.arc(sx, gz, size, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#2a2';
+      ctx.beginPath(); ctx.arc(sx, gz - size*0.3, size*0.4, 0, Math.PI*2); ctx.fill();
+      // Blinking red light when about to explode
+      if (g.timer < 500 && Math.floor(g.timer / 100) % 2 === 0) {
+        ctx.fillStyle = '#f00';
+        ctx.shadowColor = '#f00'; ctx.shadowBlur = 10;
+        ctx.beginPath(); ctx.arc(sx, gz, size*0.3, 0, Math.PI*2); ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    }
+  }
+
+  const sb = [...enemyBullets].sort((a, b) =>
+    Math.hypot(b.x-player.x, b.y-player.y) - Math.hypot(a.x-player.x, a.y-player.y));
+  for (const b of sb) {
+    const dx = b.x - player.x, dy = b.y - player.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 5) continue;
+    const ang = Math.atan2(dy, dx);
+    let rel = ang - player.angle;
+    while (rel > Math.PI) rel -= Math.PI * 2;
+    while (rel < -Math.PI) rel += Math.PI * 2;
+    if (Math.abs(rel) > halfFOV + 0.2) continue;
+    const cd = dist * Math.cos(rel);
+    const sx = W/2 + (rel / halfFOV) * (W/2);
+    const size = Math.min(H, (TILE * H * 0.15) / Math.max(1, cd));
+    const col = Math.floor(sx);
+    if (col >= 0 && col < W && cd < wallDistances[col]) {
+      ctx.fillStyle = b.color;
+      ctx.shadowColor = b.color; ctx.shadowBlur = 10;
+      ctx.beginPath(); ctx.arc(sx, H/2 - camY, size, 0, Math.PI*2); ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  if (currentWeapon === 'flamer' && keys[' '] && WEAPONS.flamer.ammo > 0) {
+    ctx.fillStyle = 'rgba(255,100,0,0.4)';
+    ctx.beginPath();
+    ctx.moveTo(W/2-30, H); ctx.lineTo(W/2-80, H/2-50 - camY);
+    ctx.lineTo(W/2+80, H/2-50 - camY); ctx.lineTo(W/2+30, H); ctx.fill();
+    ctx.fillStyle = 'rgba(255,200,0,0.3)';
+    ctx.beginPath();
+    ctx.moveTo(W/2-15, H); ctx.lineTo(W/2-40, H/2-30 - camY);
+    ctx.lineTo(W/2+40, H/2-30 - camY); ctx.lineTo(W/2+15, H); ctx.fill();
+  }
+
+  if (currentWeapon === 'sniper' && muzzleFlash) {
+    ctx.strokeStyle = '#0ff'; ctx.lineWidth = 2;
+    ctx.shadowColor = '#0ff'; ctx.shadowBlur = 10;
+    ctx.beginPath(); ctx.moveTo(W/2, H-90); ctx.lineTo(W/2, H/2 - camY); ctx.stroke();
+    ctx.shadowBlur = 0; ctx.lineWidth = 1;
+  }
+  if (currentWeapon === 'sniper') {
+    ctx.strokeStyle = 'rgba(0,255,255,0.3)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(W/2, 0); ctx.lineTo(W/2, H); ctx.stroke();
+  }
+
+  // Jump shadow + indicator
+  if (player.jumpZ > 0) {
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(W/2, H - 15, Math.max(1, 30 - player.jumpZ * 0.5), Math.max(1, 8 - player.jumpZ * 0.1), 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  drawWeapon();
+
+  if (muzzleFlash && currentWeapon !== 'sniper' && currentWeapon !== 'flamer') {
+    ctx.fillStyle = 'rgba(255,220,100,0.8)';
+    ctx.beginPath();
+    ctx.arc(W/2 + 15, H - 90, 20 + Math.random()*10, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(W/2-10, H/2 - camY); ctx.lineTo(W/2-4, H/2 - camY);
+  ctx.moveTo(W/2+4, H/2 - camY); ctx.lineTo(W/2+10, H/2 - camY);
+  ctx.moveTo(W/2, H/2-10 - camY); ctx.lineTo(W/2, H/2-4 - camY);
+  ctx.moveTo(W/2, H/2+4 - camY); ctx.lineTo(W/2, H/2+10 - camY);
+  ctx.stroke(); ctx.lineWidth = 1;
+
+  // Scope overlay when aiming
+  if (gamepadState.aim) {
+    const scopeR = Math.min(W, H) * 0.35;
+    const cx = W/2, cy = H/2 - camY;
+    // Black out everything outside scope circle
+    ctx.fillStyle = 'rgba(0,0,0,0.85)';
+    ctx.beginPath();
+    ctx.rect(0, 0, W, H);
+    ctx.arc(cx, cy, scopeR, 0, Math.PI*2, true);
+    ctx.fill();
+    // Scope ring
+    ctx.strokeStyle = '#0a0'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(cx, cy, scopeR, 0, Math.PI*2); ctx.stroke();
+    ctx.lineWidth = 1;
+    // Scope crosshair
+    ctx.strokeStyle = 'rgba(0,255,0,0.6)';
+    ctx.beginPath();
+    ctx.moveTo(cx - scopeR, cy); ctx.lineTo(cx - 5, cy);
+    ctx.moveTo(cx + 5, cy); ctx.lineTo(cx + scopeR, cy);
+    ctx.moveTo(cx, cy - scopeR); ctx.lineTo(cx, cy - 5);
+    ctx.moveTo(cx, cy + 5); ctx.lineTo(cx, cy + scopeR);
+    ctx.stroke();
+    // Center dot
+    ctx.fillStyle = '#0f0';
+    ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI*2); ctx.fill();
+    // Range marks
+    ctx.strokeStyle = 'rgba(0,255,0,0.3)';
+    for (let i = 1; i <= 4; i++) {
+      const my = cy - scopeR * i / 5;
+      ctx.beginPath(); ctx.moveTo(cx - 8, my); ctx.lineTo(cx + 8, my); ctx.stroke();
+    }
+  }
+
+  drawMinimap();
+}
+
+function drawWeapon() {
+  const cx = W/2, by = H;
+  if (currentWeapon === 'pistol') {
+    ctx.fillStyle = '#333'; ctx.fillRect(cx-15, by-70, 30, 70);
+    ctx.fillStyle = '#555'; ctx.fillRect(cx-8, by-50, 16, 30);
+    ctx.fillStyle = '#222'; ctx.fillRect(cx-20, by-20, 40, 20);
+  } else if (currentWeapon === 'mp5') {
+    ctx.fillStyle = '#222'; ctx.fillRect(cx-12, by-90, 24, 90);
+    ctx.fillStyle = '#444'; ctx.fillRect(cx-6, by-70, 12, 50);
+    ctx.fillStyle = '#333'; ctx.fillRect(cx-25, by-25, 50, 25);
+    ctx.fillStyle = '#222'; ctx.fillRect(cx-10, by-55, 20, 25);
+  } else if (currentWeapon === 'flamer') {
+    ctx.fillStyle = '#332'; ctx.fillRect(cx-18, by-80, 36, 80);
+    ctx.fillStyle = '#553'; ctx.fillRect(cx-10, by-60, 20, 40);
+    ctx.fillStyle = '#443';
+    ctx.beginPath(); ctx.arc(cx-25, by-40, 12, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx+25, by-40, 12, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#221'; ctx.fillRect(cx-30, by-20, 60, 20);
+  } else if (currentWeapon === 'sniper') {
+    ctx.fillStyle = '#234'; ctx.fillRect(cx-10, by-100, 20, 100);
+    ctx.fillStyle = '#456'; ctx.fillRect(cx-5, by-80, 10, 60);
+    ctx.fillStyle = '#0ff'; ctx.fillRect(cx-3, by-95, 6, 8);
+    ctx.fillStyle = '#345'; ctx.fillRect(cx-22, by-20, 44, 20);
+    ctx.fillStyle = '#567'; ctx.fillRect(cx-30, by-15, 15, 15);
+  }
+}
+
+function drawMinimap() {
+  const ms = 4, mx = 10, my = 50;
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(mx-2, my-2, MAP_W*ms+4, MAP_H*ms+4);
+  for (let y = 0; y < MAP_H; y++) {
+    for (let x = 0; x < MAP_W; x++) {
+      ctx.fillStyle = MAP[y][x] === 1 ? '#666' : '#222';
+      ctx.fillRect(mx + x*ms, my + y*ms, ms, ms);
+    }
+  }
+  const px = mx + (player.x/TILE)*ms, py = my + (player.y/TILE)*ms;
+  ctx.fillStyle = '#0f0'; ctx.fillRect(px-1, py-1, 3, 3);
+  ctx.fillStyle = '#f00';
+  for (const e of enemies) ctx.fillRect(mx + (e.x/TILE)*ms - 1, my + (e.y/TILE)*ms - 1, 2, 2);
+  ctx.strokeStyle = '#0f0'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(px, py);
+  ctx.lineTo(px + Math.cos(player.angle)*8, py + Math.sin(player.angle)*8);
+  ctx.stroke();
+}
+
+let lastTime = performance.now();
+function loop() {
+  const now = performance.now();
+  const dt = now - lastTime;
+  lastTime = now;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+
+keys = {};
+player = { x: 3.5*TILE, y: 5.5*TILE, angle: 0, pitch: 0, hp: 150, speed: 2.8, turnSpeed: 0.045, jumpZ: 0, jumpVZ: 0, jumping: false, floorZ: 0 };
+enemies = []; enemyBullets = []; particles = []; grenades = []; lastShot = {};
+grenadeCount = 3;
+currentWeapon = 'pistol'; muzzleFlash = false; muzzleTimer = 0;
+wallDistances = new Array(W);
+gameRunning = false;
+loop();
+</script>
+</body>
+</html>
