@@ -26,7 +26,7 @@ const MAP = [
 const MAP_W = 16
 const MAP_H = 16
 
-const WEAPONS = {
+var WEAPONS = {
 	"pistol": {"name": "Pistole", "dmg": 34, "fire_rate": 0.35, "ammo": INF, "max_ammo": INF, "auto": false},
 	"mp5": {"name": "MP5", "dmg": 20, "fire_rate": 0.08, "ammo": 120, "max_ammo": 120, "auto": true, "spread": 0.05},
 	"flamer": {"name": "Flammenwerfer", "dmg": 8, "fire_rate": 0.03, "ammo": 100, "max_ammo": 100, "auto": true, "cone": 0.35, "range": 200},
@@ -57,8 +57,8 @@ var game_running = false
 var muzzle_flash = false
 var muzzle_timer = 0.0
 
-var W = 960
-var H = 540
+var W = 960.0
+var H = 540.0
 
 # ─── Audio ───
 var audio_players = []
@@ -110,7 +110,7 @@ func init_game():
 	muzzle_flash = false
 	muzzle_timer = 0.0
 	for k in WEAPONS:
-		WEAPONS[k].ammo = WEAPONS[k].max_ammo
+		WEAPONS[k]["ammo"] = WEAPONS[k]["max_ammo"]
 	start_wave()
 
 func start_wave():
@@ -151,11 +151,11 @@ func kill_enemy(e):
 	if randf() < 0.2:
 		var wks = ["mp5", "flamer", "sniper"]
 		var wk = wks[randi() % wks.size()]
-		WEAPONS[wk].ammo = min(WEAPONS[wk].max_ammo, WEAPONS[wk].ammo + int(WEAPONS[wk].max_ammo * 0.3))
+		WEAPONS[wk]["ammo"] = min(WEAPONS[wk]["max_ammo"], WEAPONS[wk]["ammo"] + int(WEAPONS[wk]["max_ammo"] * 0.3))
 
 func tile_at(x, y):
-	var mx = int(x) / TILE
-	var my = int(y) / TILE
+	var mx = int(float(x) / TILE)
+	var my = int(float(y) / TILE)
 	if my < 0 or my >= MAP_H or mx < 0 or mx >= MAP_W: return 1
 	return MAP[my][mx]
 
@@ -164,8 +164,8 @@ func can_move(nx, ny):
 	var corners = [[nx-r, ny-r], [nx+r, ny-r], [nx-r, ny+r], [nx+r, ny+r]]
 	var player_top = player.floor_z + player.jump_z
 	for c in corners:
-		var mx = int(c[0]) / TILE
-		var my = int(c[1]) / TILE
+		var mx = int(float(c[0]) / TILE)
+		var my = int(float(c[1]) / TILE)
 		if my < 0 or my >= MAP_H or mx < 0 or mx >= MAP_W: return false
 		if MAP[my][mx] == 1:
 			if player_top < TILE - 5: return false
@@ -174,15 +174,15 @@ func can_move(nx, ny):
 func cast_ray(angle):
 	var dx = cos(angle)
 	var dy = sin(angle)
-	var map_x = int(player.x) / TILE
-	var map_y = int(player.y) / TILE
+	var map_x = int(float(player.x) / TILE)
+	var map_y = int(float(player.y) / TILE)
 	var ddx = 1e30 if dx == 0 else abs(1.0 / dx)
 	var ddy = 1e30 if dy == 0 else abs(1.0 / dy)
 	var step_x = 1 if dx > 0 else -1
 	var step_y = 1 if dy > 0 else -1
 	var side_x = (map_x + 1 - player.x/TILE) * ddx if dx > 0 else (player.x/TILE - map_x) * ddx
 	var side_y = (map_y + 1 - player.y/TILE) * ddy if dy > 0 else (player.y/TILE - map_y) * ddy
-	var hit = false
+	var _hit = false
 	var side = 0
 	for i in range(50):
 		if side_x < side_y:
@@ -190,9 +190,9 @@ func cast_ray(angle):
 		else:
 			side_y += ddy; map_y += step_y; side = 1
 		if map_y < 0 or map_y >= MAP_H or map_x < 0 or map_x >= MAP_W:
-			hit = true; break
+			_hit = true; break
 		if MAP[map_y][map_x] == 1:
-			hit = true; break
+			_hit = true; break
 	var pd = 0.01
 	if side == 0:
 		pd = (map_x - player.x/TILE + (1 - step_x) / 2.0) / dx
@@ -415,8 +415,8 @@ func update_game(dt):
 		if b.life <= 0:
 			enemy_bullets.remove_at(i)
 			continue
-		var mx = int(b.x) / TILE
-		var my = int(b.y) / TILE
+		var mx = int(float(b.x) / TILE)
+		var my = int(float(b.y) / TILE)
 		if my >= 0 and my < MAP_H and mx >= 0 and mx < MAP_W and MAP[my][mx] == 1:
 			enemy_bullets.remove_at(i)
 			continue
@@ -602,8 +602,7 @@ func render():
 		draw_string(default_font, Vector2(W/2 - 180, H/2 + 70), "Q - Granate | R/F - Schauen | 1-4 - Waffe | N - Nachladen", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.DIM_GRAY)
 
 # ─── Sound ───
-func play_tone(freq, dur, type, vol, slide):
-	var osc = AudioStreamGenerator.new()
+func play_tone(freq, dur, _type, vol, slide):
 	# Simple beep using AudioStreamPlayer
 	var player_node = AudioStreamPlayer.new()
 	add_child(player_node)

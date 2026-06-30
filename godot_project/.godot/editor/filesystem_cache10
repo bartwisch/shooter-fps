@@ -1,5 +1,11 @@
 78098b89c88a74ebe8c20117b8754620
-::res://::1782809848
+::res://::1782810843
 icon.svg::CompressedTexture2D::2597400290421724631::1782809750::1782809848::1::::<><><>0<>0<>ffa37020cfa299aabf334906d2380c73<>res://.godot/imported/icon.svg-218a8f2b3041327d8a5756f3a245f83b.ctex::
-Main.gd::GDScript::5773528160073707009::1782809727::0::1::::<>Node2D<><>0<>0<><>::
-Main.tscn::PackedScene::123911030155494801::1782809737::0::1::::<><><>0<>0<><>::res://Main.gd
+Main.gd::GDScript::5773528160073707009::1782810022::0::1::::<>Node2D<><>0<>0<><>::
+Main.tscn::PackedScene::123911030155494801::1782809901::0::1::::<><><>0<>0<><>::res://Main.gd
+::res://addons/::1782810815
+::res://addons/copy_all_errors/::1782810739
+plugin.cfg::TextFile::-1::1772999107::0::1::::<><><>0<>0<><>::
+plugin.gd::GDScript::6516234144203505211::1772999107::0::1::::<>EditorPlugin<><>0<>1<><>::
+::res://godot-copy-all-errors-5ab5055222311666b16982270e1fac051cdd17aa/::1782810838
+README.md::TextFile::-1::1772999107::0::1::::<><><>0<>0<><>::
